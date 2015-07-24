@@ -11,7 +11,7 @@
 #include "p30FXXXX.h"
 
 
-#define PIC_ID          5
+#define PIC_ID          4
 #define SEND_DATA       (PIC_ID-1)
 #define UPDATE_POSITION (PIC_ID-3)
 #define PIC_HAPTIC      (PIC_ID+3)
@@ -375,6 +375,9 @@ int main() {
         switch (motorState) {
             case INITIALIZE:
 
+                LEDRED = 1;
+                LEDYLW = 0;
+                LEDGRN = 0;
                 // Initialization to offset POSCNT to three turns (12000 counts)
                 POSCNT = 12000;     // This prevents under and overflow of the POSCNT register
 
@@ -397,28 +400,29 @@ int main() {
             case SEND_HOME:
                 // run at 50% duty cycle until current value is high
                 // high current value = end of reach
-                pwmOUT[0] = 114;
-                pwmOUT[1] = 0; // run CCW at 25% duty cycle
-                if (ADCValue0 >= 70){
-                    pwmOUT[0] = 0;
-                    pwmOUT[1] = 0;
+                pwmOUT[0] = 0;
+                pwmOUT[1] = 114; // run CCW at 25% duty cycle
+//                if (ADCValue0 >= 70){
+//                    pwmOUT[0] = 0;
+//                    pwmOUT[1] = 0;
                     POSCNT = 12000;
-                }
+//                }
                 LEDRED = 0;
                 LEDYLW = 1;
                 LEDGRN = 0;
 
+                motorState = SEND_HOME;
                 break; // SEND_HOME
 
             case SEND_DATA:
                 // Send data packet
                 LEDRED = 0;
                 LEDYLW = 0;
-                LEDGRN ^= 1;
+                LEDGRN = 0;
 
                 C1TX0B4 = PIC_ID;
-                C1TX0B1 = C1RX0B1;
-                C1TX0B2 = POSCNT;
+                C1TX0B1 = POSCNT;
+                C1TX0B2 = C1RX0B2;
                 C1TX0B3 = C1RX0B3;
                 C1TX0CONbits.TXREQ = 1;
                 while (C1TX0CONbits.TXREQ != 0);
@@ -429,7 +433,7 @@ int main() {
                 break;
 
                 case KP_PROGRAM:
-                motorState = SEND_HOME;
+//                motorState = SEND_HOME;
                 j = 0;
                 for (i = 0; i < 3; i++) {
                     rxData[j] = (InData0[i] >> 8);
@@ -440,7 +444,7 @@ int main() {
                 break;
 
             case KD_PROGRAM:
-                motorState = SEND_HOME;
+//                motorState = SEND_HOME;
                 j = 0;
                 for (i = 0; i < 3; i++) {
                     rxData[j] = (InData0[i] >> 8);
@@ -451,7 +455,7 @@ int main() {
                 break;
 
             case KI_PROGRAM:
-                motorState = SEND_HOME;
+//                motorState = SEND_HOME;
                 j = 0;
                 for (i = 0; i < 3; i++) {
                     rxData[j] = (InData0[i] >> 8);
@@ -512,6 +516,7 @@ void __attribute__((interrupt, no_auto_psv)) _C1Interrupt(void) {
         InData0[1] = C1RX0B2; //Move the recieve data from Buffers to InData
         InData0[2] = C1RX0B3;
         InData0[3] = C1RX0B4;
+        motorState = C1RX0B4;
         C1RX0CONbits.RXFUL = 0;
     }
 
