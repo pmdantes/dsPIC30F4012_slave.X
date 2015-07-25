@@ -11,7 +11,7 @@
 #include "p30FXXXX.h"
 
 
-#define PIC_ID          4
+#define PIC_ID          5
 #define SEND_DATA       (PIC_ID-1)
 #define UPDATE_POSITION (PIC_ID-3)
 #define PIC_HAPTIC      (PIC_ID+3)
@@ -81,7 +81,7 @@
 #define NEW_KI_CONST       13
 
 // Define PID controls
-#define PID_KP  1
+#define PID_KP  1.0
 #define PID_KD  0.1
 #define PID_KI  0
 #define PID_TI  0
@@ -104,15 +104,19 @@ typedef struct {
     float u;                // u=uc-y
     float e, elast;            // error
 } pid_t;
+pid_t mypid;
 
 
-//// CAN1 MODULE
+// Misc. variables
 unsigned int InData0[4] = {0, 0, 0, 0};
 unsigned int InData1[4] = {0, 0, 0, 0};
 unsigned int C1INTFtest, RX0IFtest, whileLooptest = 0;
 unsigned int motorState = INITIALIZE;
 unsigned int ADCValue0, ADCValue1 = 0;
 unsigned int pwmOUT[2] = {0, 0};
+float degPOT = 0.0;
+float degMTR = 0.0;
+unsigned int targetPos = 12000;
 
 
 void InitCan(void) {
@@ -133,7 +137,7 @@ void InitCan(void) {
     C1INTF = 0; // Reset all CAN interrupts
     IFS1bits.C1IF = 0; // Reset Interrupt flag status register
     C1INTE = 0x00FF; // Enable all CAN interrupt sources
-    IPC6bits.C1IP = 7; // CAN 1 Module interrupt is priority 6
+    IPC6bits.C1IP = 6; // CAN 1 Module interrupt is priority 6
     IEC1bits.C1IE = 1; // Enable CAN1 Interrupt
 
     /*---------------------------------------------------------
@@ -268,8 +272,10 @@ void InitUart(){
 
 //    U1BRG = 11;                 // p.507 of family reference
 //                                // 9600 baud rate for FOSC = 7.37MHz
-    U1BRG = (unsigned int) UART_BRG;           // p.507 of family reference
-                                // 115000 baud rate for FOSC = 20MHz
+//    U1BRG = (unsigned int) UART_BRG;           // p.507 of family reference
+//                                // 115000 baud rate for FOSC = 20MHz
+    U1BRG =  7;           // p.507 of family reference
+                                // 38400 baud rate for FOSC = 20MHz
 
     IFS0bits.U1TXIF = 0;        // Clear U1TX interrupt
     IFS0bits.U1RXIF = 0;        // Clear U1RX interrupt
@@ -282,6 +288,21 @@ void InitUart(){
     U1MODEbits.UARTEN = 1;      // UART is enabled
     U1STAbits.UTXEN = 1;        // U1TX pin enabled
 
+}
+
+void InitTmr1(void)
+{
+   TMR1 = 0;                // Reset timer counter
+   T1CONbits.TON = 0;       // Turn off timer 1
+   T1CONbits.TSIDL = 0;     // Continue operation during sleep
+   T1CONbits.TGATE = 0;     // Gated timer accumulation disabled
+   T1CONbits.TCS = 0;       // Use Tcy as source clock
+   T1CONbits.TCKPS = 0;     // Tcy/1 as input clock
+   PR1 = 50000;             // Interrupt period = 10ms
+   IFS0bits.T1IF = 0;       // Clear timer 1 interrupt flag
+   IEC0bits.T1IE = 1;       // Enable timer 1 interrupts
+   IPC0bits.T1IP = 7;       // Enable timer 1 interrupts
+   return;
 }
 
 void msDelay(unsigned int mseconds) //For counting time in ms
@@ -364,16 +385,13 @@ int main() {
     InitQEI();
     InitPwm();
     InitUart();
-    pid_t mypid;
+    InitTmr1();
 
     TRISRED = 0; // PORTE output
     TRISYLW = 0; // PORTE output
     TRISGRN = 0;
 
-    // Misc. variables
-    float degPOT = 0.0;
-    float degMTR = 0.0;
-    unsigned int targetPos = 12000;
+    
 
     while (1) {
 
@@ -400,6 +418,9 @@ int main() {
                 C1CTRLbits.REQOP = NORMAL;
                 while (C1CTRLbits.OPMODE != NORMAL);
 
+                // Turn on timer 1
+                T1CONbits.TON = 1;
+
                 motorState = 8;
                 break;
 
@@ -407,7 +428,7 @@ int main() {
                 // run at 50% duty cycle until current value is high
                 // high current value = end of reach
                 pwmOUT[0] = 0;
-                pwmOUT[1] = 114; // run CCW at 25% duty cycle
+                pwmOUT[1] = PWM_COUNTS_PERIOD/2; // run CCW at 25% duty cycle
 //                if (ADCValue0 >= 70){
 //                    pwmOUT[0] = 0;
 //                    pwmOUT[1] = 0;
@@ -471,16 +492,16 @@ int main() {
                 mypid.Ki = atof(rxData);
                 break;
 
-            default :
+            default:
                 LEDRED = 0;
                 LEDYLW = 0;
                 LEDGRN ^= 1;
-                // Read and convert ADC value and encoder position to degrees
-                degMTR = (float) (POSCNT * 0.09); // motor position
-                degPOT = (float) (targetPos * 0.09); // target position with motor encoder input
-                CalcPid(&mypid, degPOT, degMTR);
-                // Update PID variables
-                UpdatePid(&mypid);
+//                // Read and convert ADC value and encoder position to degrees
+//                degMTR = (float) (POSCNT * 0.09); // motor position
+//                degPOT = (float) (targetPos * 0.09); // target position with motor encoder input
+//                CalcPid(&mypid, degPOT, degMTR);
+//                // Update PID variables
+//                UpdatePid(&mypid);
                 break;
 
         } // motorState switch
@@ -543,4 +564,28 @@ void __attribute__((interrupt, no_auto_psv)) _U1TXInterrupt(void) {
 
 void __attribute__((interrupt, no_auto_psv)) _U1RXInterrupt(void) {
     IFS0bits.U1RXIF = 0; // Clear U1RX interrupt
+}
+
+void __attribute__((interrupt, no_auto_psv)) _T1Interrupt(void)
+{
+    IFS0bits.T1IF = 0;   // Clear timer 1 interrupt flag
+
+    // Read and convert ADC value and encoder position to degrees
+    degMTR = (float) (POSCNT * 0.09); // motor position
+    degPOT = (float) (targetPos * 0.09); // target position with motor encoder input
+    CalcPid(&mypid, degPOT, degMTR);
+    // Update PID variables
+    UpdatePid(&mypid);
+    
+//    PositionCalculation();
+//    Speed = AngPos[0] - AngPos[1];
+//    if (Speed >= 0)
+//    {
+//       if (Speed >= (HALFMAXSPEED))
+//          Speed = Speed - MAXSPEED;
+//    } else {
+//        if (Speed < -(HALFMAXSPEED))
+//          Speed = Speed + MAXSPEED;
+//    }
+//    Speed *= 2;
 }
