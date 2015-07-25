@@ -11,13 +11,13 @@
 #include "p30FXXXX.h"
 
 
-#define PIC_ID          5
+#define PIC_ID          6
 #define SEND_DATA       (PIC_ID-1)
 #define UPDATE_POSITION (PIC_ID-3)
 #define PIC_HAPTIC      (PIC_ID+3)
 #define SLAVE_INDATA    0//(PIC_ID-4)
 #define MASTER_INDATA   (PIC_ID-1)
-#define MAX_PID_ERROR   1000
+#define MAX_PID_ERROR   1000.0
 
 // IO definitions
 #define LEDRED  LATEbits.LATE3 // RED
@@ -115,10 +115,11 @@ unsigned int C1INTFtest, RX0IFtest, whileLooptest = 0;
 unsigned int motorState = INITIALIZE;
 unsigned int ADCValue0, ADCValue1 = 0;
 unsigned int pwmOUT[2] = {0, 0};
-unsigned int degPOT = 0;
-unsigned int degMTR = 0;
+float degPOT = 0.0;
+float degMTR = 0.0;
 unsigned int targetPos = 12000;
 float max_error = 1/MAX_PID_ERROR;
+unsigned int max_period = PWM_COUNTS_PERIOD;
 
 
 void InitCan(void) {
@@ -335,13 +336,15 @@ void InitPid(pid_t *p, float kp, float kd, float ki, float T, unsigned short N, 
     p->elast = el;
 }
 
-void CalcPid(pid_t *mypid, unsigned int degPOT, unsigned int degMTR)
+void CalcPid(pid_t *mypid, float degPOT, float degMTR)
 {
     float pidOutDutyCycle;
+//    float test;
+//    unsigned int loadtest;
 
 //    mypid->y = degMTR;
 //    mypid->e = degPOT-degMTR;
-    mypid->e = degPOT - degMTR;
+    mypid->e = (float) (degPOT - degMTR);
 //
 //    mypid->i = mypid->e+mypid->elast; // accumulated error
 ////    mypid->d = (mypid->T*mypid->dlast)/mypid->N + (mypid->Kd*mypid->T)*(mypid->y-mypid->ylast)/(mypid->T+(mypid->T/mypid->N));
@@ -349,23 +352,25 @@ void CalcPid(pid_t *mypid, unsigned int degPOT, unsigned int degMTR)
     mypid->u = mypid->Kp*mypid->e;//+mypid->Kd*mypid->d+mypid->Ki*mypid->i;
 
 //    pidOutDutyCycle = (float) ((mypid->u/degPOT)*2*PWM_COUNTS_PERIOD);
-    pidOutDutyCycle = (mypid->u*max_error);
+    pidOutDutyCycle = (mypid->u*max_error)*2.0*PWM_COUNTS_PERIOD;
+//    test = (FCY/PWM_FREQUENCY)-1;
+//    loadtest=(unsigned int)test;
 
 
-    if (pidOutDutyCycle >= 2*PWM_COUNTS_PERIOD){
-        pwmOUT[0] = (unsigned int) (2*PWM_COUNTS_PERIOD);
+    if (pidOutDutyCycle >= 2.0*PWM_COUNTS_PERIOD){
+        pwmOUT[0] = (unsigned int) (2.0*PWM_COUNTS_PERIOD);
         pwmOUT[1] = 0;
     }
-    else if (pidOutDutyCycle <= -(2*PWM_COUNTS_PERIOD)){
+    else if (pidOutDutyCycle <= -(2.0*PWM_COUNTS_PERIOD)){
         pwmOUT[0] = 0;
-        pwmOUT[1] = (unsigned int) (2*PWM_COUNTS_PERIOD);
+        pwmOUT[1] = (unsigned int) (2.0*PWM_COUNTS_PERIOD);
     }
     else if (pidOutDutyCycle <0){
         pwmOUT[0] = 0;
-        pwmOUT[1] = (unsigned int)((-1)*2*pidOutDutyCycle);
+        pwmOUT[1] = (unsigned int)((-1.0)*pidOutDutyCycle);
     }
     else{
-        pwmOUT[0] = (unsigned int)(2*pidOutDutyCycle);
+        pwmOUT[0] = (unsigned int)(pidOutDutyCycle);
         pwmOUT[1] = 0;
     }
     return;
@@ -453,8 +458,8 @@ int main() {
 
                 C1TX0B4 = PIC_ID;
                 C1TX0B1 = POSCNT;
-                C1TX0B2 = C1RX0B2;
-                C1TX0B3 = C1RX0B3;
+                C1TX0B2 = pwmOUT[0];
+                C1TX0B3 = pwmOUT[1];
                 C1TX0CONbits.TXREQ = 1;
                 while (C1TX0CONbits.TXREQ != 0);
                 break;
@@ -577,8 +582,9 @@ void __attribute__((interrupt, no_auto_psv)) _T1Interrupt(void)
     IFS0bits.T1IF = 0;   // Clear timer 1 interrupt flag
     // Read and convert ADC value and encoder position to degrees
     LEDRED = 1;
-    degMTR = POSCNT;
-    degPOT = targetPos;
+    degMTR = (float) POSCNT;
+    degPOT = (float) targetPos;
+//    degPOT = (float) 20000;
 //    degMTR = (float) (POSCNT * 0.09); // motor position
 //    degPOT = (float) (targetPos * 0.09); // target position with motor encoder input
     CalcPid(&mypid, degPOT, degMTR);
