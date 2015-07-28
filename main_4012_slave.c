@@ -53,7 +53,7 @@
 
 // CAN bit timing
 #define FOSC        20000000 // 7.37MHz
-#define FCY         FOSC.0/4.0
+#define FCY         FOSC/4
 #define BITRATE     1000000  // 100kbps
 #define NTQ         16      // Amount of Tq per bit time
 #define BRP_VAL     (((4*FCY)/(2*NTQ*BITRATE))-1) // refer to pg. 693 of Family Reference
@@ -88,14 +88,19 @@
 #define PID_TD  0
 #define PID_TS  10
 #define PID_N   10
-#define MAX_PID_ERROR 1000.0
 #define CW   0
 #define CCW  1
 
 // Define PWM constants
-#define PWM_FREQUENCY       10000.0
+#define PWM_FREQUENCY       16000
 #define PWM_PRESCALER       0       // 0=1:1 1=1:4 2=1:16 3=1:64
-#define PWM_COUNTS_PERIOD   (5000000.0/10000.0)-1.0   // 16kHz for FRC
+#define PWM_COUNTS_PERIOD   (FCY/PWM_FREQUENCY)-1
+
+// Define PWM PID controller constants
+#define PID_PWM_FREQUENCY       16000.0
+#define PID_FOSC            20000000.0
+#define PID_FCY             PID_FOSC/4.0
+#define PID_PWM_COUNTS_PERIOD   (FCY/PWM_FREQUENCY)-1.0
 
 // pid_t type
 typedef struct {
@@ -113,16 +118,11 @@ pid_t mypid;
 // Misc. variables
 unsigned int InData0[4] = {0, 0, 0, 0};
 unsigned int InData1[4] = {0, 0, 0, 0};
-unsigned int C1INTFtest, RX0IFtest, whileLooptest = 0;
 unsigned int motorState = INITIALIZE;
 unsigned int ADCValue0, ADCValue1 = 0;
 unsigned int pwmOUT[2] = {0, 0};
-//unsigned int pwmOUTCW
-//unsigned int pwmOUTCCW
-float degPOT = 0.0;
-float degMTR = 0.0;
 unsigned int targetPos = 12000;
-float max_error = 1.0/MAX_PID_ERROR;
+unsigned char motorDirection = 0;
 
 
 void InitCan(void) {
@@ -304,7 +304,7 @@ void InitTmr1(void)
    T1CONbits.TGATE = 0;     // Gated timer accumulation disabled
    T1CONbits.TCS = 0;       // Use Tcy as source clock
    T1CONbits.TCKPS = 0;     // Tcy/1 as input clock
-   PR1 = 5000;             // Interrupt period = 10ms
+   PR1 = 5000;              // Interrupt period = 10ms
    IFS0bits.T1IF = 0;       // Clear timer 1 interrupt flag
    IEC0bits.T1IE = 1;       // Enable timer 1 interrupts
    IPC0bits.T1IP = 7;       // Enable timer 1 interrupts
@@ -339,35 +339,42 @@ void InitPid(pid_t *p, float kp, float kd, float ki, float T, unsigned short N, 
     p->elast = el;
 }
 
-void CalcPid(pid_t *mypid, float degPOT, float degMTR)
+void CalcPid(pid_t *mypid)
 {
     volatile float pidOutDutyCycle;
     volatile int target = (int)targetPos;
     volatile int motorPos = (int)POSCNT;
     volatile float error = 0.0;
-
-//    mypid->y = degMTR;
+    float max_pwm = 624.0; //2.0*PID_PWM_COUNTS_PERIOD;
+    
     error = (float) (target - motorPos);
 
 //    mypid->i = mypid->e+mypid->elast; // accumulated error
-////    mypid->d = (mypid->T*mypid->dlast)/mypid->N + (mypid->Kd*mypid->T)*(mypid->y-mypid->ylast)/(mypid->T+(mypid->T/mypid->N));
-//    mypid->d = mypid->e-mypid->elast;
+//    mypid->d = mypid->e-mypid->elast; // difference in error
     mypid->u = mypid->Kp*error;//+mypid->Kd*mypid->d+mypid->Ki*mypid->i;
+    
+    pidOutDutyCycle = (float) (mypid->u*0.01);
+    if (pidOutDutyCycle > 0.0){
+        motorDirection = 1; // clockwise
+        pidOutDutyCycle += 120.0;
+    }
+    else if (pidOutDutyCycle < 0.0){
+        motorDirection = 2; // counter clockwise
+        pidOutDutyCycle -= 120.0;
+    }
 
-//    pidOutDutyCycle = (float) ((mypid->u/degPOT)*2.0*PWM_COUNTS_PERIOD);
-    pidOutDutyCycle = (float) (mypid->u*0.1);
 
-    if (pidOutDutyCycle >= 998.0){
-        pwmOUT[CW] = 997;
+    if (pidOutDutyCycle >= max_pwm){
+        pwmOUT[CW] = 624;//(unsigned int) max_pwm;
         pwmOUT[CCW] = 0;
     }
-    else if (pidOutDutyCycle <= -998.0){
+    else if (pidOutDutyCycle <= -max_pwm){
         pwmOUT[CW] = 0;
-        pwmOUT[CCW] = 997;
+        pwmOUT[CCW] = 624;//(unsigned int) max_pwm;
     }
     else if (pidOutDutyCycle <0){
         pwmOUT[CW] = 0;
-        pwmOUT[CCW] = (unsigned int)((-1.0)*pidOutDutyCycle);
+        pwmOUT[CCW] = (unsigned int)(-pidOutDutyCycle);
     }
     else{
         pwmOUT[CW] = (unsigned int)(pidOutDutyCycle);
@@ -430,19 +437,15 @@ int main() {
                 // Turn on timer 1
                 T1CONbits.TON = 1;
 
-                motorState = 8;
+//                motorState = 8;
                 break;
 
             case SEND_HOME:
                 // run at 50% duty cycle until current value is high
                 // high current value = end of reach
                 pwmOUT[CW] = 0;
-                pwmOUT[CCW] = PWM_COUNTS_PERIOD/2; // run CCW at 25% duty cycle
-//                if (ADCValue0 >= 70){
-//                    pwmOUT[0] = 0;
-//                    pwmOUT[1] = 0;
-                    POSCNT = 12000;
-//                }
+                pwmOUT[CCW] = PWM_COUNTS_PERIOD / 2; // run CCW at 25% duty cycle
+                POSCNT = 12000;
                 LEDRED = 0;
                 LEDYLW = 1;
                 LEDGRN = 0;
@@ -458,8 +461,8 @@ int main() {
 
                 C1TX0B4 = PIC_ID;
                 C1TX0B1 = POSCNT;
-                C1TX0B2 = pwmOUT[CW];
-                C1TX0B3 = pwmOUT[CCW];
+                C1TX0B2 = ADCValue0;
+                C1TX0B3 = motorDirection;
                 C1TX0CONbits.TXREQ = 1;
                 while (C1TX0CONbits.TXREQ != 0);
                 break;
@@ -469,7 +472,6 @@ int main() {
                 break;
 
                 case KP_PROGRAM:
-//                motorState = SEND_HOME;
                 j = 0;
                 for (i = 0; i < 3; i++) {
                     rxData[j] = (InData0[i] >> 8);
@@ -480,7 +482,6 @@ int main() {
                 break;
 
             case KD_PROGRAM:
-//                motorState = SEND_HOME;
                 j = 0;
                 for (i = 0; i < 3; i++) {
                     rxData[j] = (InData0[i] >> 8);
@@ -491,7 +492,6 @@ int main() {
                 break;
 
             case KI_PROGRAM:
-//                motorState = SEND_HOME;
                 j = 0;
                 for (i = 0; i < 3; i++) {
                     rxData[j] = (InData0[i] >> 8);
@@ -505,12 +505,6 @@ int main() {
                 LEDRED = 0;
                 LEDYLW = 0;
                 LEDGRN ^= 1;
-//                // Read and convert ADC value and encoder position to degrees
-//                degMTR = (float) (POSCNT * 0.09); // motor position
-//                degPOT = (float) (targetPos * 0.09); // target position with motor encoder input
-//                CalcPid(&mypid, degPOT, degMTR);
-//                // Update PID variables
-//                UpdatePid(&mypid);
                 break;
 
         } // motorState switch
@@ -524,7 +518,6 @@ int main() {
 //            while (!(U1STAbits.TRMT));
 //        }
 
-        // CDTCDTCDT
         msDelay(PID_TS);
     } //while
 } // main
@@ -578,24 +571,7 @@ void __attribute__((interrupt, no_auto_psv)) _U1RXInterrupt(void) {
 void __attribute__((interrupt, no_auto_psv)) _T1Interrupt(void)
 {
     IFS0bits.T1IF = 0;   // Clear timer 1 interrupt flag
-
-    // Read and convert ADC value and encoder position to degrees
-    degMTR = (float) (POSCNT); // motor position
-//    degPOT = (float) (12500); // target position with motor encoder input
-    degPOT = (float) (targetPos); // target position with motor encoder input
-    CalcPid(&mypid, degPOT, degMTR);
-    // Update PID variables
-    UpdatePid(&mypid);
-
-//    PositionCalculation();
-//    Speed = AngPos[0] - AngPos[1];
-//    if (Speed >= 0)
-//    {
-//       if (Speed >= (HALFMAXSPEED))
-//          Speed = Speed - MAXSPEED;
-//    } else {
-//        if (Speed < -(HALFMAXSPEED))
-//          Speed = Speed + MAXSPEED;
-//    }
-//    Speed *= 2;
+//    LEDRED = 1;
+    CalcPid(&mypid);
+//    LEDRED = 0;
 }
