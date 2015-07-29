@@ -102,6 +102,10 @@
 #define PID_FCY             PID_FOSC/4.0
 #define PID_PWM_COUNTS_PERIOD   (FCY/PWM_FREQUENCY)-1.0
 
+//ADC
+#define INDEXSIZE 25
+
+
 // pid_t type
 typedef struct {
     float Kp, Kd, Ki, T;
@@ -123,7 +127,10 @@ unsigned int ADCValue0, ADCValue1 = 0;
 unsigned int pwmOUT[2] = {0, 0};
 unsigned int targetPos = 12000;
 unsigned char motorDirection = 0;
-
+unsigned int ADCvaluebuffer[INDEXSIZE]={0};
+unsigned int adcbufferindex = 0;
+unsigned int ADCsum = 0;
+unsigned char fullflag = 0;
 
 void InitCan(void) {
     // Initializing CAN Module Control Register
@@ -195,7 +202,7 @@ void InitInt(void) {
 }
 
 void InitAdc(void) {
-    ADPCFG &= ~0x0006; // Sets  PB1 and PB2 as analog pin (clear bits)
+    ADPCFG &= ~0x0007; // Sets  PB1 and PB2 as analog pin (clear bits)
     ADCON1bits.ADON = 0; // A/D converter module off
     ADCON1bits.ADSIDL = 0; // Continue module operation in Idle mode
     ADCON1bits.SIMSAM = 0; // Samples multiple channels individually in sequence
@@ -420,6 +427,8 @@ int main() {
                 LEDGRN = 0;
                 // Initialization to offset POSCNT to three turns (12000 counts)
                 POSCNT = 12000;     // This prevents under and overflow of the POSCNT register
+                ADCBUF0 = 0;
+                ADCValue0 = 0;
 
                 // Enable ADC Module
                 ADCON1bits.ADON = 1; // A/D converter module on
@@ -524,7 +533,41 @@ int main() {
 
 void __attribute__((interrupt, no_auto_psv)) _ADCInterrupt(void) {
     IFS0bits.ADIF = 0;
-    ADCValue0 = ADCBUF0;
+    unsigned int k = 0;
+//    ADCValue0 = ADCBUF0;
+
+      if (adcbufferindex >= INDEXSIZE) {
+        adcbufferindex = 0;
+        fullflag = 1;
+    }
+    if (adcbufferindex == (INDEXSIZE - 1)){
+        k = 0;
+    }
+//    ADCValue0 = ADCBUF0;
+    //can set requirements to detect PWM before reading ADC
+    if (ADCBUF0 < 120){
+        ADCvaluebuffer[adcbufferindex] = ADCBUF0;
+        if (fullflag == 0) {
+//            ADCvaluebuffer[adcbufferindex] = ADCBUF0;
+            ADCsum = ADCsum + ADCvaluebuffer[adcbufferindex];
+            ADCValue0 = ADCsum / (adcbufferindex+1);
+        }
+        if(fullflag == 1){
+            ADCsum = 0;
+            for (k = 0; k < INDEXSIZE; k++) {
+                ADCsum = ADCsum + ADCvaluebuffer[k];
+//                ADCValue0 = ADCsum*0.1;
+//                return ADCsum;
+            }
+            ADCValue0 = ADCsum/INDEXSIZE;
+
+        }
+        if(ADCValue0 > 120){
+            ADCValue0 = 110;
+        }
+    }
+
+        adcbufferindex += 1;
 }
 
 void __attribute__((interrupt, no_auto_psv)) _INT0Interrupt(void) {
