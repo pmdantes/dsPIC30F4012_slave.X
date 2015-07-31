@@ -346,42 +346,77 @@ void InitPid(pid_t *p, float kp, float kd, float ki, float T, unsigned short N, 
     p->elast = el;
 }
 
+//void CalcPid(pid_t *mypid)
+//{
+//    volatile float pidOutDutyCycle;
+//    volatile int target = (int)targetPos;
+//    volatile int motorPos = (int)POSCNT;
+//    volatile float error = 0.0;
+//    float max_pwm = 624.0; //2.0*PID_PWM_COUNTS_PERIOD;
+//
+//    error = (float) (target - motorPos);
+//
+////    mypid->i = mypid->e+mypid->elast; // accumulated error
+////    mypid->d = mypid->e-mypid->elast; // difference in error
+//    mypid->u = mypid->Kp*error;//+mypid->Kd*mypid->d+mypid->Ki*mypid->i;
+//
+//    pidOutDutyCycle = (float) (mypid->u*0.01);
+//    if (pidOutDutyCycle > 0.0){
+//        motorDirection = 1; // clockwise
+//        pidOutDutyCycle += 120.0;
+//    }
+//    else if (pidOutDutyCycle < 0.0){
+//        motorDirection = 2; // counter clockwise
+//        pidOutDutyCycle -= 120.0;
+//    }
+//
+//
+//    if (pidOutDutyCycle >= max_pwm){
+//        pwmOUT[CW] = 624;//(unsigned int) max_pwm;
+//        pwmOUT[CCW] = 0;
+//    }
+//    else if (pidOutDutyCycle <= -max_pwm){
+//        pwmOUT[CW] = 0;
+//        pwmOUT[CCW] = 624;//(unsigned int) max_pwm;
+//    }
+//    else if (pidOutDutyCycle <0){
+//        pwmOUT[CW] = 0;
+//        pwmOUT[CCW] = (unsigned int)(-pidOutDutyCycle);
+//    }
+//    else{
+//        pwmOUT[CW] = (unsigned int)(pidOutDutyCycle);
+//        pwmOUT[CCW] = 0;
+//    }
+//    return;
+//}
+
 void CalcPid(pid_t *mypid)
 {
     volatile float pidOutDutyCycle;
     volatile int target = (int)targetPos;
     volatile int motorPos = (int)POSCNT;
     volatile float error = 0.0;
-    float max_pwm = 624.0; //2.0*PID_PWM_COUNTS_PERIOD;
-    
+
+//    mypid->y = degMTR;
     error = (float) (target - motorPos);
 
 //    mypid->i = mypid->e+mypid->elast; // accumulated error
 //    mypid->d = mypid->e-mypid->elast; // difference in error
     mypid->u = mypid->Kp*error;//+mypid->Kd*mypid->d+mypid->Ki*mypid->i;
-    
-    pidOutDutyCycle = (float) (mypid->u*0.01);
-    if (pidOutDutyCycle > 0.0){
-        motorDirection = 1; // clockwise
-        pidOutDutyCycle += 120.0;
-    }
-    else if (pidOutDutyCycle < 0.0){
-        motorDirection = 2; // counter clockwise
-        pidOutDutyCycle -= 120.0;
-    }
 
+    pidOutDutyCycle = (float) (mypid->u*0.1);
 
-    if (pidOutDutyCycle >= max_pwm){
-        pwmOUT[CW] = 624;//(unsigned int) max_pwm;
+    if (pidOutDutyCycle >= 998.0){
+        pwmOUT[CW] = 997;
         pwmOUT[CCW] = 0;
     }
-    else if (pidOutDutyCycle <= -max_pwm){
+    else if (pidOutDutyCycle <= -998.0){
         pwmOUT[CW] = 0;
-        pwmOUT[CCW] = 624;//(unsigned int) max_pwm;
+        pwmOUT[CCW] = 997;
     }
     else if (pidOutDutyCycle <0){
         pwmOUT[CW] = 0;
-        pwmOUT[CCW] = (unsigned int)(-pidOutDutyCycle);
+        pwmOUT[CCW] = (unsigned int)((-1.0)*pidOutDutyCycle);
     }
     else{
         pwmOUT[CW] = (unsigned int)(pidOutDutyCycle);
@@ -389,6 +424,7 @@ void CalcPid(pid_t *mypid)
     }
     return;
 }
+
 
 void UpdatePid(pid_t *mypid)
 {
